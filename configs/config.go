@@ -26,6 +26,8 @@ func loadEnv() {
 func GetConfig() models.Config {
 	loadEnv()
 
+	logPath := os.Getenv("LOG_PATH")
+
 	dbDriver := os.Getenv("DB_DRIVER")
 	dbHost := os.Getenv("DB_HOST")
 	dbPort := os.Getenv("DB_PORT")
@@ -33,9 +35,21 @@ func GetConfig() models.Config {
 	dbUsername := os.Getenv("DB_USERNAME")
 	dbPassword := os.Getenv("DB_PASSWORD")
 
-	logPath := os.Getenv("LOG_PATH")
+	redisHost := os.Getenv("REDIS_HOST")
+	redisPort := os.Getenv("REDIS_PORT")
+	redisUser := os.Getenv("REDIS_USER")
+	redisPassword := os.Getenv("REDIS_PASSWORD")
+	redisSentinelIP1 := os.Getenv("REDIS_SENTINEL_IP1")
+	redisSentinelIP2 := os.Getenv("REDIS_SENTINEL_IP2")
+	redisSentinelIP3 := os.Getenv("REDIS_SENTINEL_IP3")
+	redisSentinelPort := os.Getenv("REDIS_SENTINEL_PORT")
+	redisMasterName := os.Getenv("REDIS_MASTERNAME")
+	enableHA := os.Getenv("REDIS_HA")
 
 	return models.Config{
+		Logger: models.LoggerConfig{
+			LogPath: logPath,
+		},
 		DB: models.DBConfig{
 			DBDriver:	dbDriver,
 			Host:       dbHost,
@@ -44,8 +58,17 @@ func GetConfig() models.Config {
 			Password:   dbPassword,
 			DBName:		dbName,
 		},
-		Logger: models.LoggerConfig{
-			LogPath: logPath,
+		Redis: models.RedisConfig{
+			Host:			redisHost,
+			Port:			redisPort,
+			User:			redisUser,
+			Password:		redisPassword,
+			SentinelIP1: 	redisSentinelIP1,
+			SentinelIP2:	redisSentinelIP2,
+			SentinelIP3:	redisSentinelIP3,
+			SentinelPort:	redisSentinelPort,
+			MasterName:		redisMasterName,
+			EnableHA:		enableHA,
 		},
 	}
 }

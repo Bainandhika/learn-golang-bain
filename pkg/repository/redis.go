@@ -3,84 +3,46 @@ package repository
 import (
 	"context"
 	"fmt"
+	"learn-golang-bain/configs"
 	"net"
 	"time"
 
-	rs "github.com/go-redis/redis/v8"
-	"github.com/gomodule/redigo/redis"
+	"github.com/go-redis/redis/v8"
 )
 
 var (
 	ctx = context.Background()
 )
 
-func initRedisPool(ctx context.Context) *redis.Pool {
-	redisHost, _ := helpers.GetEnvVar("REDIS_HOST")
-	redisPort, _ := helpers.GetEnvVar("REDIS_PORT")
-	redisPassword, _ := helpers.GetEnvVar("REDIS_PASSWORD")
-	redisUser, _ := helpers.GetEnvVar("REDIS_USER")
+func InitRedisSentinel() (string, *redis.Client, *redis.Client, error) {
+	redisConfig := configs.GetConfig().Redis
 
-	pool := &redis.Pool{
-		MaxIdle:   0,
-		MaxActive: 12000,
-		DialContext: func(ctx context.Context) (redis.Conn, error) {
-			conn, err := redis.DialContext(ctx, "tcp", redisHost+":"+redisPort)
-			if err != nil {
-				return nil, fmt.Errorf("error occurred when init redis connection. detail : %s", err.Error())
-			}
+	var err error
+	
 
-			if redisUser != "" && redisPassword != "" {
-				if _, err := conn.Do("AUTH", redisUser, redisPassword); err != nil {
-					conn.Close()
-					return nil, fmt.Errorf("error occurred when init redis connection. detail : %s", err.Error())
-				}
-			}
-
-			if redisPassword != "" {
-				if _, err := conn.Do("AUTH", redisPassword); err != nil {
-					conn.Close()
-					return nil, fmt.Errorf("error occurred when init redis connection. detail : %s", err.Error())
-				}
-			}
-
-			return conn, err
-		},
-	}
-
-	return pool
-}
-
-func InitRedisSentinel() (string, *rs.Client, *rs.Client, error) {
-	redisMasterName, _ := helpers.GetEnvVar("REDIS_MASTERNAME")
-	redisAuthHA, _ := helpers.GetEnvVar("REDIS_AUTH_HA")
-	redisSentinelIP1, _ := helpers.GetEnvVar("REDIS_SENTINEL_IP1")
-	redisSentinelIP2, _ := helpers.GetEnvVar("REDIS_SENTINEL_IP2")
-	redisSentinelIP3, _ := helpers.GetEnvVar("REDIS_SENTINEL_IP3")
-	redisSentinelPort, _ := helpers.GetEnvVar("REDIS_SENTINEL_PORT")
-
-	client := rs.NewFailoverClient(&rs.FailoverOptions{
-		MasterName: redisMasterName,
-		Password:   redisAuthHA,
+	client := redis.NewFailoverClient(&redis.FailoverOptions{
+		MasterName: redisConfig.MasterName,
+		Password:   redisConfig.Password,
 		SentinelAddrs: []string{
-			redisSentinelIP1 + ":" + redisSentinelPort,
-			redisSentinelIP2 + ":" + redisSentinelPort,
-			redisSentinelIP3 + ":" + redisSentinelPort},
+			redisConfig.SentinelIP1 + ":" + redisConfig.SentinelPort,
+			redisConfig.SentinelIP2 + ":" + redisConfig.SentinelPort,
+			redisConfig.SentinelIP3 + ":" + redisConfig.SentinelPort},
 		MaxRetries: -1,
 	})
 	
-	sentinel := rs.NewSentinelClient(&rs.Options{
-		Addr: ":" + redisSentinelPort,
+	sentinel := redis.NewSentinelClient(&redis.Options{
+		Addr: ":" + redisConfig.SentinelPort,
 		MaxRetries: -1,
 	})
 	defer sentinel.Close()
 
-	masterAddr, err := sentinel.GetMasterAddrByName(ctx, redisMasterName).Result()
+	masterAddr, err := sentinel.GetMasterAddrByName(ctx, redisConfig.MasterName).Result()
 	if err != nil {
 		return "", nil, nil, err
 	}
 
 	masterAddrString := net.JoinHostPort(masterAddr[0], masterAddr[1])
-	master := rs.NewClient(&rs.Options{
+	master := redis.NewClient(&redis.Options{
 		Addr:       masterAddrString,
 		MaxRetries: -1,
 	})
@@ -89,7 +51,7 @@ func InitRedisSentinel() (string, *rs.Client, *rs.Client, error) {
 }
 
 func SetRedis(key string, value interface{}, expiredtimeinsecond int) error {
-	redisHA, _ := helpers.GetEnvVar("REDIS_HA")
+	redisHA := configs.GetConfig().Redis.EnableHA
 
 	datalog.Info.Printf("...Adding key %s and its value to redis.\n", key)
 

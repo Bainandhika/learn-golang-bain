@@ -1,8 +1,9 @@
 package models
 
 type Config struct {
-	DB DBConfig
-	Logger LoggerConfig
+	DB		DBConfig
+	Logger	LoggerConfig
+	Redis	RedisConfig
 }
 
 type DBConfig struct {
@@ -16,4 +17,17 @@ type DBConfig struct {
 
 type LoggerConfig struct {
 	LogPath string
+}
+
+type RedisConfig struct {
+	Host			string
+	Port			string
+	User			string
+	Password		string
+	SentinelIP1		string
+	SentinelIP2		string
+	SentinelIP3		string
+	SentinelPort	string
+	MasterName		string
+	EnableHA		string
 }
