@@ -14,13 +14,21 @@ var (
 	ctx = context.Background()
 )
 
-func InitRedisSentinel() (string, *redis.Client, *redis.Client, error) {
+func initSingleRedis() *redis.Client {
 	redisConfig := configs.GetConfig().Redis
+	client := redis.NewClient(&redis.Options{
+		Addr:		redisConfig.Host + ":" + redisConfig.Port,
+		Username:	redisConfig.User,
+		Password:	redisConfig.Password,
+	})
 
-	var err error
+	return client
+}
+
+func initRedisSentinel() (failOverClient *redis.Client, masterClient *redis.Client, err error) {
+	redisConfig := configs.GetConfig().Redis
 	
-
-	client := redis.NewFailoverClient(&redis.FailoverOptions{
+	failOverClient = redis.NewFailoverClient(&redis.FailoverOptions{
 		MasterName: redisConfig.MasterName,
 		Password:   redisConfig.Password,
 		SentinelAddrs: []string{
@@ -38,196 +46,100 @@ func InitRedisSentinel() (string, *redis.Client, *redis.Client, error) {
 
 	masterAddr, err := sentinel.GetMasterAddrByName(ctx, redisConfig.MasterName).Result()
 	if err != nil {
-		return "", nil, nil, err
+		return failOverClient, masterClient, err
 	}
 
 	masterAddrString := net.JoinHostPort(masterAddr[0], masterAddr[1])
-	master := redis.NewClient(&redis.Options{
+	masterClient = redis.NewClient(&redis.Options{
 		Addr:       masterAddrString,
 		MaxRetries: -1,
 	})
 
-	return masterAddrString, client, master, nil
+	return failOverClient, masterClient, err
 }
 
-func SetRedis(key string, value interface{}, expiredtimeinsecond int) error {
+func RedisSet(key string, value interface{}, exp /*in second*/ int) error {
 	redisHA := configs.GetConfig().Redis.EnableHA
 
-	datalog.Info.Printf("...Adding key %s and its value to redis.\n", key)
+	// datalog.Info.Printf("...Adding key %s and its value to redis.\n", key)
 
+	var usedClient *redis.Client
 	if redisHA == "true" {
-		masterAddr, client, master, err := InitRedisSentinel()
-		if err != nil {
-			return fmt.Errorf("redis addr : %s err : %s", masterAddr, err.Error())
-		}
-		defer client.Close()
-		defer master.Close()
-
-		if expiredtimeinsecond == 0 {
-			expiredtimeinsecond = helpers.DefaultExpiredTimeInSecond
-		}
-
-		err = master.Set(ctx, key, value, time.Duration(expiredtimeinsecond)).Err()
-		if err != nil {
-			return fmt.Errorf("error occurred when setting key : %s and value : %v to redis. redis addr : %s detail :  %s", key, value, masterAddr, err.Error())
-		}
-
-		datalog.Info.Printf("Key : %s and its value added to redis.\n", key)
-		return nil
-	} else {
-		singleClient, err := initRedisPool(ctx).GetContext(ctx)
+		failOverClient, usedClient, err := initRedisSentinel()
 		if err != nil {
 			return err
 		}
-		defer singleClient.Close()
-	
-		if expiredtimeinsecond == 0 {
-			expiredtimeinsecond = helpers.DefaultExpiredTimeInSecond
-		}
-	
-		setStatus, err := redis.String(singleClient.Do("SET", key, value, "EX", expiredtimeinsecond))
-		if err != nil {
-			return fmt.Errorf("error occurred when setting key : %s and value : %v to redis. detail : %s", key, value, err.Error())
-		}
-	
-		datalog.Info.Printf("Set status : %s\n", setStatus)
-		datalog.Info.Printf("Key : %s and its value added to redis.\n", key)
-		return nil
+		defer failOverClient.Close()
+		defer usedClient.Close()
+	} else {
+		usedClient := initSingleRedis()
+		defer usedClient.Close()
 	}
+
+	err := usedClient.Set(ctx, key, value, time.Duration(exp)).Err()
+	if err != nil {
+		return fmt.Errorf("error occurred when setting key : %s and value : %v to redis. detail :  %s", key, value, err.Error())
+	}
+
+	return nil
+	// datalog.Info.Printf("Key : %s and its value added to redis.\n", key)
 }
 
-func GetRedis(key string) (string, error) {
-	redisHA, _ := helpers.GetEnvVar("REDIS_HA")
+func RedisGet(key string) (string, error) {
+	redisHA := configs.GetConfig().Redis.EnableHA
 
-	datalog.Info.Printf("...Getting value by key : %s from redis\n", key)
-
+	// datalog.Info.Printf("...Getting value by key : %s from redis\n", key)
+	var usedClient *redis.Client
 	if redisHA == "true" {
-		masterAddr, client, master, err := InitRedisSentinel()
+		failOverClient, usedClient, err := initRedisSentinel()
 		if err != nil {
-			return "", fmt.Errorf("redis addr : %s err : %s", masterAddr, err.Error())
+			return "", fmt.Errorf("err : %s", err.Error())
 		}
-		defer client.Close()
-		defer master.Close()
-
-		val, err := client.Get(ctx, key).Result()
-		if err != nil {
-			if err.Error() == rs.Nil.Error() {
-				return "", nil
-			}
-
-			return "", fmt.Errorf("error occurred when getting value by key : %s from redis. detail : %s", key, err.Error())
-		}
-
-		return val, nil
+		defer failOverClient.Close()
+		defer usedClient.Close()
 	} else {
-		singleClient, err := initRedisPool(ctx).GetContext(ctx)
-		if err != nil {
-			return "", err
-		}
-		defer singleClient.Close()
-	
-		val, err := redis.String(singleClient.Do("GET", key))
-		if err != nil {
-			if err.Error() == redis.ErrNil.Error() {
-				return "", nil
-			}
-	
-			return "", fmt.Errorf("error occurred when getting value by key : %s from redis. detail : %s", key, err.Error())
-		}
-	
-		return val, nil
+		usedClient := initSingleRedis()
+		defer usedClient.Close()
 	}
+
+	val, err := usedClient.Get(ctx, key).Result()
+	if err != nil {
+		if err.Error() == redis.Nil.Error() {
+			return "", nil
+		}
+
+		return "", fmt.Errorf("error occurred when getting value by key : %s from redis. detail : %s", key, err.Error())
+	}
+
+	return val, nil
 }
 
-func FindKey(key string) (res string, err error) {
-	redisHA, _ := helpers.GetEnvVar("REDIS_HA")
+func GetRedisKey(key string) (keys []string, err error) {
+	redisHA := configs.GetConfig().Redis.EnableHA
 
-	datalog.Info.Printf("...Finding key(s) by which contains '%s' from redis\n", key)
+	// datalog.Info.Printf("...Getting key which contains '%s' from redis\n", key)
 
-	var resp []string
+	var usedClient *redis.Client
 	if redisHA == "true" {
-		var (
-			masterAddr string
-			client, master *rs.Client
-		)
-		masterAddr, client, master, err = InitRedisSentinel()
+		failOverClient, usedClient, err := initRedisSentinel()
 		if err != nil {
-			return "", fmt.Errorf("redis addr : %s err : %s", masterAddr, err.Error())
+			return keys, err
 		}
-		defer client.Close()
-		defer master.Close()
-
-		resp, err = client.Keys(ctx, key).Result()
-		if err != nil {
-			return "", fmt.Errorf("error occurred when Getting key which contains '%s' from redis. detail : %s", key, err.Error())
-		}
-
-		if len(resp) > 0 {
-			res = "keys found"
-			datalog.Info.Println("keys found: ", resp)
-			return
-		}
-
-		return res, err
+		defer failOverClient.Close()
+		defer usedClient.Close()
 	} else {
-		var singleClient redis.Conn
-		singleClient, err = initRedisPool(ctx).GetContext(ctx)
-		if err != nil {
-			return
-		}
-		defer singleClient.Close()
-	
-		resp, err = redis.Strings(singleClient.Do("KEYS", key))
-		if err != nil {
-			return
-		}
-	
-		if len(resp) > 0 {
-			res = "keys found"
-			datalog.Info.Println("keys found: ", resp)
-			return
-		}
-
-		return res, err
+		usedClient := initSingleRedis()
+		defer usedClient.Close()
 	}
 
-	
-}
-
-func GetRedisKey(key string) ([]string, error) {
-	redisHA, _ := helpers.GetEnvVar("REDIS_HA")
-
-	datalog.Info.Printf("...Getting key which contains '%s' from redis\n", key)
-
-	var keyResult []string
-	if redisHA == "true" {
-		masterAddr, client, master, err := InitRedisSentinel()
-		if err != nil {
-			return nil, fmt.Errorf("redis addr : %s err : %s", masterAddr, err.Error())
-		}
-		defer client.Close()
-		defer master.Close()
-
-		keyResult, err = client.Keys(ctx, key).Result()
-		if err != nil {
-			return nil, fmt.Errorf("error occurred when Getting key which contains '%s' from redis. detail : %s", key, err.Error())
-		}
-	} else {
-		singleClient, err := initRedisPool(ctx).GetContext(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer singleClient.Close()
-	
-		keyResult, err = redis.Strings(singleClient.Do("KEYS", key))
-		if err != nil {
-			return nil, fmt.Errorf("error occurred when Getting key by which contains '%s' from redis. detail : %s", key, err.Error())
-		}
+	keys, err = usedClient.Keys(ctx, key).Result()
+	if err != nil {
+		return keys, fmt.Errorf("error occurred when Getting key by which contains '%s' from redis. detail : %s", key, err.Error())
 	}
 
-	if len(keyResult) == 0 {
-		datalog.Info.Printf("There is no key which contains %s.\n", key)
+	if len(keys) == 0 {
+		// datalog.Info.Printf("There is no key which contains %s.\n", key)
 	}
 
-	return keyResult, nil
+	return keys, err
 }

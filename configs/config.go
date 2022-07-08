@@ -44,6 +44,7 @@ func GetConfig() models.Config {
 	redisSentinelIP3 := os.Getenv("REDIS_SENTINEL_IP3")
 	redisSentinelPort := os.Getenv("REDIS_SENTINEL_PORT")
 	redisMasterName := os.Getenv("REDIS_MASTERNAME")
+	redisAuthHA := os.Getenv("REDIS_AUTH_HA")
 	enableHA := os.Getenv("REDIS_HA")
 
 	return models.Config{
@@ -68,6 +69,7 @@ func GetConfig() models.Config {
 			SentinelIP3:	redisSentinelIP3,
 			SentinelPort:	redisSentinelPort,
 			MasterName:		redisMasterName,
+			AuthHA: 		redisAuthHA,
 			EnableHA:		enableHA,
 		},
 	}

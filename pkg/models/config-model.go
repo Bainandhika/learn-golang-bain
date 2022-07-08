@@ -29,5 +29,6 @@ type RedisConfig struct {
 	SentinelIP3		string
 	SentinelPort	string
 	MasterName		string
+	AuthHA			string
 	EnableHA		string
 }
